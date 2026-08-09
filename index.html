@@ -251,8 +251,18 @@ button{font-family:inherit;}
 </div>
 <script>
   window.addEventListener("error", function(e){
+    var msg = (e.message || (e.error && e.error.message) || "unknown");
     var el = document.getElementById("boot-error");
-    if(el) el.textContent = "লোড এরর: " + (e.message || (e.error && e.error.message) || "unknown");
+    if(el){ el.textContent = "লোড এরর: " + msg; return; }
+    // React has already mounted and replaced #root — show a floating banner instead of a silent white screen
+    var bar = document.getElementById("runtime-error-bar");
+    if(!bar){
+      bar = document.createElement("div");
+      bar.id = "runtime-error-bar";
+      bar.style.cssText = "position:fixed;top:0;left:0;right:0;background:#A6432E;color:#fff;padding:10px 14px;font-size:12.5px;z-index:99999;font-family:sans-serif;";
+      document.body.appendChild(bar);
+    }
+    bar.textContent = "একটি এরর হয়েছে: " + msg;
   });
 </script>
 
@@ -305,12 +315,20 @@ function freshState(){
   return { tasks:[], events:[], habits:[...DEFAULT_HABITS], habitLogs:{}, goals:[], notes:[],
            accounts:[...DEFAULT_ACCOUNTS], transactions:[], budgets:{} };
 }
-function migrateState(s){
-  // upgrade older saves that only had a flat `expenses` array
-  if(!s.accounts) s.accounts = [...DEFAULT_ACCOUNTS];
-  if(!s.budgets) s.budgets = {};
-  if(!s.transactions){
-    s.transactions = (s.expenses||[]).map(e=>({
+function migrateState(raw){
+  const s = raw || {};
+  // Firebase RTDB drops empty arrays/objects entirely on write, so every
+  // field must be defensively defaulted here on every read, not just once.
+  if(!Array.isArray(s.tasks)) s.tasks = [];
+  if(!Array.isArray(s.events)) s.events = [];
+  if(!Array.isArray(s.habits)) s.habits = [];
+  if(!s.habitLogs || typeof s.habitLogs !== "object") s.habitLogs = {};
+  if(!Array.isArray(s.goals)) s.goals = [];
+  if(!Array.isArray(s.notes)) s.notes = [];
+  if(!Array.isArray(s.accounts) || s.accounts.length===0) s.accounts = [...DEFAULT_ACCOUNTS];
+  if(!s.budgets || typeof s.budgets !== "object") s.budgets = {};
+  if(!Array.isArray(s.transactions)){
+    s.transactions = (Array.isArray(s.expenses) ? s.expenses : []).map(e=>({
       id:e.id, type:"expense", amount:Number(e.amount||0), category:e.category||"other",
       accountId: s.accounts[0].id, note:e.note||"", date:e.date
     }));
