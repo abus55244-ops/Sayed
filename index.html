@@ -440,7 +440,9 @@ function App(){
       ref = fbDb.ref("kherokhata");
       ref.on("value", (snap)=>{
         const val = snap.val();
-        if(val) setState(migrateState(val));
+        if(!val) return;
+        const migrated = migrateState(val);
+        setState(prev => JSON.stringify(prev) === JSON.stringify(migrated) ? prev : migrated);
       });
     });
     return ()=>{ if(ref) ref.off("value"); };
