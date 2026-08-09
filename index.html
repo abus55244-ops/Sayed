@@ -360,7 +360,7 @@ const DEFAULT_ACCOUNTS = [
 ];
 function freshState(){
   return { tasks:[], events:[], habits:[...DEFAULT_HABITS], habitLogs:{}, goals:[], notes:[],
-           accounts:[...DEFAULT_ACCOUNTS], transactions:[], budgets:{} };
+           accounts:[...DEFAULT_ACCOUNTS], transactions:[], budgets:{}, routines:[], meetingPoints:[] };
 }
 function migrateState(raw){
   const s = raw || {};
@@ -375,6 +375,8 @@ function migrateState(raw){
   if(!Array.isArray(s.notes)) s.notes = [];
   if(!Array.isArray(s.accounts) || s.accounts.length===0) s.accounts = [...DEFAULT_ACCOUNTS];
   if(!s.budgets || typeof s.budgets !== "object") s.budgets = {};
+  if(!Array.isArray(s.routines)) s.routines = [];
+  if(!Array.isArray(s.meetingPoints)) s.meetingPoints = [];
   if(!Array.isArray(s.transactions)){
     s.transactions = (Array.isArray(s.expenses) ? s.expenses : []).map(e=>({
       id:e.id, type:"expense", amount:Number(e.amount||0), category:e.category||"other",
@@ -482,6 +484,18 @@ function currentPeriod(times){
   const remainText = (hh>0 ? toBn(hh)+" ঘ. " : "") + toBn(mm)+" মি.";
   return {current, next, remainText};
 }
+function findActiveRoutine(routines, now){
+  now = now || new Date();
+  const nowMin = now.getHours()*60 + now.getMinutes();
+  const toMin = (hhmm)=>{ if(!hhmm) return null; const [h,m] = hhmm.split(":").map(Number); return h*60+m; };
+  for(const r of (routines||[])){
+    const s = toMin(r.startTime), e = toMin(r.endTime);
+    if(s===null || e===null) continue;
+    if(e > s){ if(nowMin>=s && nowMin<e) return r; }
+    else { if(nowMin>=s || nowMin<e) return r; } // crosses midnight
+  }
+  return null;
+}
 
 /* ===================== Daily hadith (rotates on every app open) =====================
    Only muttafaqun 'alayh (agreed upon by Bukhari & Muslim) narrations are included,
@@ -507,17 +521,77 @@ const HADITH_LIST = [
   {text:"তোমাদের কেউ যেন তার ভাইয়ের প্রতি যা তার নিজের জন্য অপছন্দনীয় তা না করে।", source:"সহীহ বুখারী ও মুসলিম"},
   {text:"যে ব্যক্তি মানুষের প্রতি দয়া করে না, আল্লাহও তার প্রতি দয়া করেন না।", source:"সহীহ বুখারী ও মুসলিম"},
   {text:"যুলুম কিয়ামতের দিন অন্ধকার হয়ে দেখা দেবে।", source:"সহীহ বুখারী ও মুসলিম"},
+  {text:"তোমরা ততক্ষণ জান্নাতে প্রবেশ করবে না যতক্ষণ না ঈমান আনবে, আর ততক্ষণ পূর্ণ মুমিন হবে না যতক্ষণ না একে অপরকে ভালোবাসবে। আমি কি তোমাদের এমন একটি কাজ বলে দেব, যা করলে তোমরা একে অপরকে ভালোবাসতে শুরু করবে? তোমরা নিজেদের মধ্যে সালামের প্রসার ঘটাও।", source:"সহীহ মুসলিম"},
+  {text:"যে ব্যক্তি কারো ওপর জুলুম করেছে — তা তার সম্মান সংক্রান্ত হোক বা অন্য কিছু — তার উচিত আজই তার কাছ থেকে ক্ষমা নিয়ে নেওয়া, কেননা আখিরাতে দিনার-দিরহাম কিছুই থাকবে না; নেক আমল থেকে নিয়ে মজলুমকে দেওয়া হবে, আর নেক আমল না থাকলে মজলুমের গুনাহ তার ওপর চাপিয়ে দেওয়া হবে।", source:"সহীহ বুখারী"},
+  {text:"মুসলিমের ওপর মুসলিমের ছয়টি অধিকার রয়েছে: সাক্ষাৎ হলে সালাম দেওয়া, দাওয়াত করলে গ্রহণ করা, পরামর্শ চাইলে কল্যাণকর পরামর্শ দেওয়া, হাঁচি দিয়ে আলহামদুলিল্লাহ বললে জবাব দেওয়া, অসুস্থ হলে দেখতে যাওয়া এবং মারা গেলে জানাজায় শরিক হওয়া।", source:"সহীহ মুসলিম"},
+  {text:"মুমিন একই গর্ত থেকে দুইবার দংশিত হয় না।", source:"সহীহ বুখারী ও মুসলিম"},
+  {text:"কোনো ব্যক্তির মিথ্যাবাদী হওয়ার জন্য এটাই যথেষ্ট যে, সে যা কিছু শোনে তা-ই (যাচাই ছাড়া) বলে বেড়ায়।", source:"সহীহ মুসলিম"},
+  {text:"নিশ্চয় আল্লাহ তা'আলা কোমল, তিনি কোমলতা পছন্দ করেন এবং কঠোরতার বিনিময়ে যা দেন না, তা কোমলতার বিনিময়ে দিয়ে থাকেন।", source:"সহীহ মুসলিম"},
+  {text:"কিয়ামতের দিন সবচেয়ে ঘৃণিত ব্যক্তিদের একজন হবে সে, যে ঝগড়ায় অত্যন্ত কঠোর ও তর্কপ্রিয়।", source:"সহীহ বুখারী ও মুসলিম"},
+  {text:"তোমাদের কেউ যেন তার ভাইয়ের দিকে অস্ত্র দিয়ে ইশারা না করে, কেননা সে জানে না, হয়তো শয়তান তার হাত থেকে তা ছুটিয়ে দিয়ে তাকে জাহান্নামের গর্তে ফেলে দেবে।", source:"সহীহ বুখারী ও মুসলিম"},
+  {text:"তোমাদের মধ্যে যে অন্যায় দেখবে, সে যেন তা হাত দিয়ে প্রতিহত করে; সামর্থ্য না থাকলে মুখ দিয়ে; তাতেও সামর্থ্য না থাকলে অন্তর দিয়ে ঘৃণা করে — আর এটি ঈমানের সর্বনিম্ন স্তর।", source:"সহীহ মুসলিম"},
+  {text:"নিশ্চয় আল্লাহ তোমাদের আকৃতি ও সম্পদের দিকে তাকান না, বরং তিনি তোমাদের অন্তর ও কর্মের দিকে তাকান।", source:"সহীহ মুসলিম"},
+  {text:"তোমাদের কেউ যেন তার ভাইকে তার বসার জায়গা থেকে উঠিয়ে সেখানে নিজে না বসে; বরং তোমরা জায়গা প্রশস্ত ও উন্মুক্ত করে দাও।", source:"সহীহ বুখারী ও মুসলিম"},
+  {text:"রাস্তায় বসা থেকে বিরত থাকো। যদি বসতেই হয়, তবে রাস্তার হক আদায় করো — তা হলো দৃষ্টি সংযত রাখা, কষ্ট না দেওয়া, সালামের জবাব দেওয়া এবং সৎকাজের আদেশ ও অসৎকাজে নিষেধ করা।", source:"সহীহ বুখারী ও মুসলিম"},
+  {text:"তোমাদের প্রত্যেকে দায়িত্বশীল, আর প্রত্যেককে তার দায়িত্ব সম্পর্কে জিজ্ঞাসা করা হবে।", source:"সহীহ বুখারী ও মুসলিম"},
+  {text:"যে ব্যক্তি কোনো বিষয়ে আমাদের প্রতারিত করে, সে আমাদের অন্তর্ভুক্ত নয়।", source:"সহীহ মুসলিম"},
+  {text:"আমল নিয়্যাতের ওপর নির্ভরশীল, আর প্রত্যেক ব্যক্তি যা নিয়্যাত করে তা-ই পাবে।", source:"সহীহ বুখারী ও মুসলিম"},
+  {text:"সদকা কোনো সম্পদ কমায় না, ক্ষমাশীলতা আল্লাহ বান্দার সম্মান বৃদ্ধি করেন, আর যে বিনয়ী হয় আল্লাহ তাকে উঁচু মর্যাদা দেন।", source:"সহীহ মুসলিম"},
+  {text:"যে ব্যক্তি কারো কষ্ট রাস্তা থেকে সরিয়ে দেয়, তার জন্য তা সদকাস্বরূপ গণ্য হয়।", source:"সহীহ বুখারী ও মুসলিম"},
 ];
+/* Keywords used to filter the full Bukhari collection down to daily
+   mu'amalat/mu'asharat (dealings & manners) hadiths. Since the whole
+   Sahih Bukhari collection is authentic by scholarly consensus, this
+   filtering only affects topical relevance, never authenticity. */
+const HADITH_KEYWORDS = ["প্রতিবেশ","ব্যবসা","ঋণ","সালাম","ক্ষমা","রাগ","ওয়াদা","মেহমান","আত্মীয়","আমানত","মিথ্যা","জুলুম","ভাই","হাসি","দান","সদকা","ন্যায়","অধিকার","সাক্ষাৎ","লেনদেন","ক্রয়","বিক্রয়"];
+const HADITH_ONLINE_SOURCE_URL = "https://cdn.jsdelivr.net/gh/fawazahmed0/hadith-api@1/editions/ben-bukhari.min.json";
+
 function useDailyHadith(){
   const [hadith, setHadith] = useState(null);
   useEffect(()=>{
-    let idx = 0;
-    try{
-      const prev = parseInt(localStorage.getItem("kherokhata_hadith_idx"), 10);
-      idx = isNaN(prev) ? 0 : (prev+1) % HADITH_LIST.length;
-      localStorage.setItem("kherokhata_hadith_idx", String(idx));
-    }catch(e){ idx = Math.floor(Math.random()*HADITH_LIST.length); }
-    setHadith(HADITH_LIST[idx]);
+    let cancelled = false;
+    function fallbackCurated(){
+      let idx = 0;
+      try{
+        const prev = parseInt(localStorage.getItem("kherokhata_hadith_idx"), 10);
+        idx = isNaN(prev) ? 0 : (prev+1) % HADITH_LIST.length;
+        localStorage.setItem("kherokhata_hadith_idx", String(idx));
+      }catch(e){ idx = Math.floor(Math.random()*HADITH_LIST.length); }
+      if(!cancelled) setHadith(HADITH_LIST[idx]);
+    }
+    async function tryOnline(){
+      try{
+        let list;
+        const cached = localStorage.getItem("kherokhata_bukhari_ben_v1");
+        if(cached){
+          list = JSON.parse(cached);
+        } else {
+          const res = await fetch(HADITH_ONLINE_SOURCE_URL);
+          if(!res.ok) throw new Error("fetch failed: "+res.status);
+          const j = await res.json();
+          list = (j && Array.isArray(j.hadiths)) ? j.hadiths : [];
+          if(list.length===0) throw new Error("empty edition");
+          try{ localStorage.setItem("kherokhata_bukhari_ben_v1", JSON.stringify(list)); }catch(e){ /* storage full — still usable this session */ }
+        }
+        const matches = list.filter(h=>h.text && HADITH_KEYWORDS.some(k=>h.text.indexOf(k)>=0));
+        const pool = matches.length>0 ? matches : list;
+        let idx = 0;
+        const prev = parseInt(localStorage.getItem("kherokhata_hadith_online_idx"), 10);
+        idx = isNaN(prev) ? 0 : (prev+1) % pool.length;
+        localStorage.setItem("kherokhata_hadith_online_idx", String(idx));
+        const picked = pool[idx];
+        if(cancelled) return;
+        if(picked && picked.text){
+          setHadith({text: picked.text, source: "সহীহ বুখারী, হাদিস নং "+picked.hadithnumber});
+        } else {
+          fallbackCurated();
+        }
+      }catch(e){
+        if(!cancelled) fallbackCurated();
+      }
+    }
+    tryOnline();
+    return ()=>{ cancelled = true; };
   }, []);
   return hadith;
 }
@@ -670,7 +744,7 @@ function App(){
         {tab==="dashboard" && <Dashboard state={state} updateItem={updateItem} toggleHabit={toggleHabit} setTab={setTab} openAdd={openAdd} showToast={showToast} prayer={prayer} />}
         {tab==="tasks" && <TasksView state={state} updateItem={updateItem} removeItem={removeItem} openAdd={openAdd} openEdit={openEdit} />}
         {tab==="calendar" && <CalendarView state={state} selectedDate={selectedDate} setSelectedDate={setSelectedDate} openAdd={openAdd} openEdit={openEdit} removeItem={removeItem} />}
-        {tab==="habits" && <DailyLogView state={state} updateItem={updateItem} setState={setState} openAdd={openAdd} openEdit={openEdit} removeItem={removeItem} prayer={prayer} />}
+        {tab==="habits" && <DailyLogView state={state} updateItem={updateItem} setState={setState} addItem={addItem} uid={uid} openAdd={openAdd} openEdit={openEdit} removeItem={removeItem} prayer={prayer} />}
         {tab==="goals" && <GoalsView state={state} updateItem={updateItem} removeItem={removeItem} openAdd={openAdd} openEdit={openEdit} />}
         {tab==="notes" && <NotesView state={state} openAdd={openAdd} openEdit={openEdit} removeItem={removeItem} />}
         {tab==="expenses" && <MoneyView state={state} setState={setState} addItem={addItem} updateItem={updateItem} removeItem={removeItem} uid={uid} openAdd={openAdd} openEdit={openEdit} />}
@@ -726,19 +800,28 @@ function Dashboard({state, updateItem, toggleHabit, setTab, openAdd, showToast, 
   const [tickCount, tick] = useState(0);
   useEffect(()=>{ const iv = setInterval(()=>tick(t=>t+1), 60000); return ()=>clearInterval(iv); }, []);
   const period = useMemo(()=>currentPeriod(prayer.times), [prayer.times, tickCount]);
+  const activeRoutine = useMemo(()=>findActiveRoutine(state.routines, new Date()), [state.routines, tickCount]);
   const hadith = useDailyHadith();
 
   return (
     <React.Fragment>
-      {period && (
+      {period ? (
         <div className="waqt-banner">
           <div>
             <div className="lbl">এখন চলছে</div>
             <div className="now">{period.current.label} ওয়াক্ত</div>
+            {activeRoutine && <div style={{fontSize:13, color:"var(--gold)", fontWeight:600, marginTop:4}}>এখন তোমার {activeRoutine.title}-র সময়</div>}
           </div>
           <div className="next">পরবর্তী: {period.next.label}<br/>আর <b>{period.remainText}</b> বাকি</div>
         </div>
-      )}
+      ) : activeRoutine ? (
+        <div className="waqt-banner">
+          <div>
+            <div className="lbl">এখন চলছে</div>
+            <div className="now">{activeRoutine.title}</div>
+          </div>
+        </div>
+      ) : null}
 
       {hadith && (
         <div className="hadith-card">
@@ -946,10 +1029,24 @@ function CalendarView({state, selectedDate, setSelectedDate, openAdd, openEdit, 
 }
 
 /* ===================== Habits ===================== */
-function DailyLogView({state, setState, openAdd, openEdit, removeItem, prayer}){
+function DailyLogView({state, setState, updateItem, addItem, uid, openAdd, openEdit, removeItem, prayer}){
   const days = [];
   for(let i=6;i>=0;i--){ const d=new Date(); d.setDate(d.getDate()-i); days.push(isoDate(d)); }
   const today = todayIso();
+  const [meetingText, setMeetingText] = useState("");
+  const [showHistory, setShowHistory] = useState(false);
+
+  const addMeetingPoint = (carryForward)=>{
+    if(!meetingText.trim()) return;
+    addItem("meetingPoints", {id:uid(), text:meetingText.trim(), date:today, carryForward, closed:false});
+    setMeetingText("");
+  };
+  const closeMeetingPoint = (id)=> updateItem("meetingPoints", id, {closed:true});
+  const todaysAgenda = state.meetingPoints.filter(m=>{
+    if(m.closed) return false;
+    if(m.carryForward) return true;
+    return m.date === today;
+  }).sort((a,b)=>a.date.localeCompare(b.date));
 
   const toggle = (habitId, iso)=>{
     setState(s=>{
@@ -1050,11 +1147,90 @@ function DailyLogView({state, setState, openAdd, openEdit, removeItem, prayer}){
           </div>
         );
       })}
+      <div className="section-title">
+        আজকের রুটিন (সময়সূচি)
+        <span className="tag" onClick={()=>openAdd("routine")}>+ নতুন যোগ করো</span>
+      </div>
+      <div className="card tab-accent" style={{"--accent":"var(--gold)"}}>
+        {state.routines.length===0 ? <Empty glyph="◷" msg="সময়সহ দৈনন্দিন রুটিন (যেমন: টিউশন, ক্লাস) যোগ করতে + এ ট্যাপ করো" /> :
+          [...state.routines].sort((a,b)=>a.startTime.localeCompare(b.startTime)).map(r=>{
+            const active = findActiveRoutine(state.routines, new Date());
+            const isNow = active && active.id===r.id;
+            return (
+              <div className="row" key={r.id} onClick={()=>openEdit("routine", r)}>
+                <div style={{flex:1}}>
+                  <div className="row-title" style={isNow?{fontWeight:700, color:"var(--gold)"}:{}}>{r.title}</div>
+                  <div className="row-meta">{r.startTime} – {r.endTime}</div>
+                </div>
+                {isNow && <span className="pill" style={{background:"rgba(184,134,59,0.15)", color:"var(--gold)"}}>চলছে</span>}
+              </div>
+            );
+          })
+        }
+      </div>
+
+      <div className="section-title">
+        টিচার্স মিটিং
+        <span className="tag" onClick={()=>setShowHistory(true)}>পুরাতন আলোচনা দেখো</span>
+      </div>
+      <div className="card tab-accent" style={{"--accent":"var(--slate)"}}>
+        <div className="field" style={{marginBottom:10}}>
+          <textarea value={meetingText} onChange={e=>setMeetingText(e.target.value)} placeholder="যে বিষয়ে কথা বলবে তা লেখো..." style={{minHeight:52}} />
+        </div>
+        <div className="chip-row">
+          <button className="btn" style={{width:"auto", flex:1, background:"var(--stone)", color:"var(--ink)", fontSize:13, padding:"10px 8px"}} onClick={()=>addMeetingPoint(false)}>শেষ (ফিরবে না)</button>
+          <button className="btn" style={{width:"auto", flex:1, background:"var(--slate)", color:"#fff", fontSize:13, padding:"10px 8px"}} onClick={()=>addMeetingPoint(true)}>চলমান (পরদিন ফিরবে)</button>
+        </div>
+        <div className="stitch" />
+        {todaysAgenda.length===0 ? <Empty glyph="✎" msg="আজকের আলোচ্য বিষয় এখনো যোগ করা হয়নি" /> :
+          todaysAgenda.map(m=>(
+            <div className="row" key={m.id}>
+              {m.carryForward ? <Chk checked={false} onClick={()=>closeMeetingPoint(m.id)} accent="var(--slate)" /> : <span style={{width:22}}></span>}
+              <div style={{flex:1}}>
+                <div className="row-title">{m.text}</div>
+                <div className="row-meta">{fmtDate(m.date)}{m.carryForward ? " · চলমান" : ""}</div>
+              </div>
+            </div>
+          ))
+        }
+      </div>
+
+      {showHistory && (
+        <MeetingHistorySheet points={state.meetingPoints} onClose={()=>setShowHistory(false)} />
+      )}
     </React.Fragment>
   );
 }
 
-/* ===================== Goals ===================== */
+function MeetingHistorySheet({points, onClose}){
+  const [filterDate, setFilterDate] = useState("");
+  const grouped = useMemo(()=>{
+    const byDate = {};
+    points.forEach(m=>{ (byDate[m.date] = byDate[m.date]||[]).push(m); });
+    return Object.keys(byDate).sort((a,b)=>b.localeCompare(a)).map(d=>({date:d, items:byDate[d]}));
+  }, [points]);
+  const filtered = filterDate ? grouped.filter(g=>g.date===filterDate) : grouped;
+  return (
+    <Sheet title="পুরাতন আলোচনা" onClose={onClose}>
+      <div className="field"><label>তারিখ দিয়ে খোঁজো (ঐচ্ছিক)</label><input type="date" value={filterDate} onChange={e=>setFilterDate(e.target.value)} /></div>
+      {filtered.length===0 ? <Empty glyph="🗒" msg="কোনো তথ্য পাওয়া যায়নি" /> :
+        filtered.map(g=>(
+          <div key={g.date} style={{marginBottom:16}}>
+            <div style={{fontWeight:700, fontSize:13, color:"var(--slate)", marginBottom:6}}>{fmtDate(g.date)}</div>
+            {g.items.map(m=>(
+              <div className="row" key={m.id}>
+                <div style={{flex:1}}>
+                  <div className="row-title">{m.text}</div>
+                  <div className="row-meta">{m.carryForward ? (m.closed ? "চলমান ছিল · এখন বন্ধ" : "চলমান") : "একবারের জন্য"}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ))
+      }
+    </Sheet>
+  );
+}
 function GoalsView({state, updateItem, removeItem, openAdd, openEdit}){
   return (
     <React.Fragment>
@@ -1272,6 +1448,7 @@ function ModalRouter({modal, state, addItem, updateItem, removeItem, uid, onClos
   if(type==="task") return <TaskForm state={state} data={data} addItem={addItem} updateItem={updateItem} removeItem={removeItem} uid={uid} onClose={onClose} showToast={showToast} />;
   if(type==="event") return <EventForm data={data} addItem={addItem} updateItem={updateItem} removeItem={removeItem} uid={uid} onClose={onClose} showToast={showToast} />;
   if(type==="habit") return <HabitForm data={data} addItem={addItem} updateItem={updateItem} removeItem={removeItem} uid={uid} onClose={onClose} showToast={showToast} />;
+  if(type==="routine") return <RoutineForm data={data} addItem={addItem} updateItem={updateItem} removeItem={removeItem} uid={uid} onClose={onClose} showToast={showToast} />;
   if(type==="goal") return <GoalForm data={data} addItem={addItem} updateItem={updateItem} removeItem={removeItem} uid={uid} onClose={onClose} showToast={showToast} />;
   if(type==="note") return <NoteForm state={state} data={data} addItem={addItem} updateItem={updateItem} removeItem={removeItem} uid={uid} onClose={onClose} showToast={showToast} />;
   if(type==="transaction") return <TransactionForm state={state} data={data} addItem={addItem} updateItem={updateItem} removeItem={removeItem} uid={uid} onClose={onClose} showToast={showToast} />;
@@ -1357,6 +1534,28 @@ function HabitForm({data, addItem, updateItem, removeItem, uid, onClose, showToa
     </Sheet>
   );
 }
+
+function RoutineForm({data, addItem, updateItem, removeItem, uid, onClose, showToast}){
+  const [title, setTitle] = useState(data?data.title:"");
+  const [startTime, setStartTime] = useState(data?data.startTime:"");
+  const [endTime, setEndTime] = useState(data?data.endTime:"");
+  const save = ()=>{
+    if(!title.trim() || !startTime || !endTime) return;
+    if(data){ updateItem("routines", data.id, {title, startTime, endTime}); showToast("রুটিন আপডেট হয়েছে"); }
+    else { addItem("routines", {id:uid(), title, startTime, endTime}); showToast("রুটিন যোগ হয়েছে"); }
+    onClose();
+  };
+  return (
+    <Sheet title={data?"রুটিন এডিট করো":"নতুন রুটিন"} onClose={onClose}>
+      <div className="field"><label>কাজের নাম</label><input autoFocus value={title} onChange={e=>setTitle(e.target.value)} placeholder="যেমন: টিউশন পড়ানো" /></div>
+      <div className="field"><label>শুরুর সময়</label><input type="time" value={startTime} onChange={e=>setStartTime(e.target.value)} /></div>
+      <div className="field"><label>শেষের সময়</label><input type="time" value={endTime} onChange={e=>setEndTime(e.target.value)} /></div>
+      <button className="btn btn-primary" onClick={save}>সংরক্ষণ করো</button>
+      {data && <button className="btn btn-danger" onClick={()=>{removeItem("routines", data.id); onClose();}}>রুটিন মুছে ফেলো</button>}
+    </Sheet>
+  );
+}
+
 
 function GoalForm({data, addItem, updateItem, removeItem, uid, onClose, showToast}){
   const [title, setTitle] = useState(data?data.title:"");
