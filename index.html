@@ -111,6 +111,28 @@ button{font-family:inherit;}
 .hero-stat .num{ font-family:'Tiro Bangla',serif; font-size:22px; color:var(--green);}
 .hero-stat .lbl{ font-size:11.5px; color:var(--muted); margin-top:2px;}
 
+/* ---------- Current waqt banner ---------- */
+.waqt-banner{
+  margin:-18px 18px 14px; background:var(--card); border-radius:16px; box-shadow:var(--shadow);
+  padding:14px 18px; border-top:3px solid var(--sage); display:flex; align-items:center; justify-content:space-between;
+}
+.waqt-banner .lbl{ font-size:12px; color:var(--muted); }
+.waqt-banner .now{ font-family:'Tiro Bangla',serif; font-size:20px; color:var(--green); margin-top:2px;}
+.waqt-banner .next{ text-align:right; font-size:11.5px; color:var(--muted); }
+.waqt-banner .next b{ color:var(--sage); font-weight:700; }
+
+/* ---------- Highlighted daily hadith ---------- */
+.hadith-card{
+  margin:0 18px 18px; border-radius:16px; padding:18px 18px 16px;
+  background:linear-gradient(160deg, var(--green) 0%, var(--green-deep) 100%);
+  color:var(--stone); border:1px solid var(--gold); box-shadow:0 4px 16px rgba(19,42,29,0.25);
+  position:relative;
+}
+.hadith-card .kicker{ font-size:11px; letter-spacing:0.6px; color:var(--gold-light); font-weight:700; }
+.hadith-card .qmark{ font-family:'Tiro Bangla',serif; font-size:34px; color:var(--gold); line-height:0.5; position:absolute; top:12px; right:16px; opacity:0.55;}
+.hadith-card .text{ font-family:'Tiro Bangla',serif; font-size:16.5px; line-height:1.85; margin-top:10px; color:#fff; }
+.hadith-card .src{ font-size:11.5px; color:rgba(242,241,236,0.7); margin-top:12px; }
+
 /* ---------- Checklist rows ---------- */
 .row{ display:flex; align-items:center; gap:12px; padding:9px 0; }
 .row + .row{ border-top:1px dashed var(--line); }
@@ -302,10 +324,35 @@ const firebaseReadyPromise = initFirebaseIfConfigured();
 /* ===================== Storage layer ===================== */
 const STORE_KEY = "kherokhata_v1";
 const DEFAULT_HABITS = [
-  {id:"habit_salah", title:"পাঁচ ওয়াক্ত নামাজ"},
-  {id:"habit_quran", title:"দৈনিক কুরআন তিলাওয়াত"},
-  {id:"habit_shahitya", title:"দৈনিক সাহিত্য পাঠ"},
+  {id:"habit_fajr", title:"ফজর", kind:"prayer", prayerKey:"Fajr"},
+  {id:"habit_dhuhr", title:"যোহর", kind:"prayer", prayerKey:"Dhuhr"},
+  {id:"habit_asr", title:"আসর", kind:"prayer", prayerKey:"Asr"},
+  {id:"habit_maghrib", title:"মাগরিব", kind:"prayer", prayerKey:"Maghrib"},
+  {id:"habit_isha", title:"এশা", kind:"prayer", prayerKey:"Isha"},
+  {id:"habit_quran", title:"কুরআন তিলাওয়াত", kind:"reading"},
+  {id:"habit_hadith", title:"হাদিস পাঠ", kind:"reading"},
+  {id:"habit_shahitya", title:"সাহিত্য পাঠ", kind:"reading"},
 ];
+function migrateHabits(habits){
+  let list = Array.isArray(habits) ? habits.slice() : [];
+  const hasAnyPrayer = list.some(h=>h.kind==="prayer");
+  list = list.filter(h=>h.id!=="habit_salah"); // drop old combined prayer item
+  if(!hasAnyPrayer){
+    list = [...DEFAULT_HABITS.filter(h=>h.kind==="prayer"), ...list];
+  }
+  list = list.map(h=>{
+    if(h.id==="habit_quran" && !h.kind) return {...h, kind:"reading", title:"কুরআন তিলাওয়াত"};
+    if(h.id==="habit_shahitya" && !h.kind) return {...h, kind:"reading", title:"সাহিত্য পাঠ"};
+    if(!h.kind) return {...h, kind:"custom"};
+    return h;
+  });
+  if(!list.some(h=>h.id==="habit_hadith")){
+    const idx = list.findIndex(h=>h.id==="habit_quran");
+    const hadith = {id:"habit_hadith", title:"হাদিস পাঠ", kind:"reading"};
+    if(idx>=0) list.splice(idx+1,0,hadith); else list.push(hadith);
+  }
+  return list;
+}
 const DEFAULT_ACCOUNTS = [
   {id:"acc_cash", name:"ক্যাশ", openingBalance:0},
   {id:"acc_bank", name:"ব্যাংক", openingBalance:0},
@@ -322,6 +369,7 @@ function migrateState(raw){
   if(!Array.isArray(s.tasks)) s.tasks = [];
   if(!Array.isArray(s.events)) s.events = [];
   if(!Array.isArray(s.habits)) s.habits = [];
+  s.habits = migrateHabits(s.habits);
   if(!s.habitLogs || typeof s.habitLogs !== "object") s.habitLogs = {};
   if(!Array.isArray(s.goals)) s.goals = [];
   if(!Array.isArray(s.notes)) s.notes = [];
@@ -366,6 +414,112 @@ function greeting(){
   if(h<16) return "শুভ দুপুর";
   if(h<19) return "শুভ বিকাল";
   return "শুভ সন্ধ্যা";
+}
+
+/* ===================== Prayer times (Aladhan API, University of Islamic
+   Sciences Karachi method — standard for Bangladesh/South Asia) ===================== */
+const DHAKA_COORDS = {lat:23.8103, lng:90.4125};
+function usePrayerTimes(){
+  const [times, setTimes] = useState(null);
+  const [status, setStatus] = useState("loading"); // loading | ok | error
+  useEffect(()=>{
+    let cancelled = false;
+    const today = todayIso();
+    const cacheKey = "kherokhata_prayer_" + today;
+    try{
+      const cached = localStorage.getItem(cacheKey);
+      if(cached){ setTimes(JSON.parse(cached)); setStatus("ok"); return; }
+    }catch(e){}
+    function fetchWithCoords(lat, lng){
+      const [y,m,d] = today.split("-");
+      const url = "https://api.aladhan.com/v1/timings/"+d+"-"+m+"-"+y+"?latitude="+lat+"&longitude="+lng+"&method=1";
+      fetch(url).then(r=>r.json()).then(j=>{
+        if(cancelled) return;
+        if(j && j.data && j.data.timings){
+          const t = j.data.timings;
+          const clean = k => (t[k]||"").split(" ")[0];
+          const result = {Fajr:clean("Fajr"), Dhuhr:clean("Dhuhr"), Asr:clean("Asr"), Maghrib:clean("Maghrib"), Isha:clean("Isha")};
+          setTimes(result); setStatus("ok");
+          try{ localStorage.setItem(cacheKey, JSON.stringify(result)); }catch(e){}
+        } else { setStatus("error"); }
+      }).catch(()=>{ if(!cancelled) setStatus("error"); });
+    }
+    if("geolocation" in navigator){
+      navigator.geolocation.getCurrentPosition(
+        pos=>fetchWithCoords(pos.coords.latitude, pos.coords.longitude),
+        ()=>fetchWithCoords(DHAKA_COORDS.lat, DHAKA_COORDS.lng),
+        {timeout:5000}
+      );
+    } else {
+      fetchWithCoords(DHAKA_COORDS.lat, DHAKA_COORDS.lng);
+    }
+    return ()=>{ cancelled = true; };
+  }, []);
+  return {times, status};
+}
+
+/* ===================== Current waqt (prayer period) ===================== */
+function currentPeriod(times){
+  if(!times) return null;
+  const now = new Date();
+  const nowMin = now.getHours()*60 + now.getMinutes();
+  const toMin = (hhmm)=>{ if(!hhmm) return null; const [h,m] = hhmm.split(":").map(Number); return h*60+m; };
+  const marks = [
+    {key:"Fajr", label:"ফজর", min: toMin(times.Fajr)},
+    {key:"Dhuhr", label:"যোহর", min: toMin(times.Dhuhr)},
+    {key:"Asr", label:"আসর", min: toMin(times.Asr)},
+    {key:"Maghrib", label:"মাগরিব", min: toMin(times.Maghrib)},
+    {key:"Isha", label:"এশা", min: toMin(times.Isha)},
+  ].filter(m=>m.min!==null);
+  if(marks.length===0) return null;
+  let current = marks[marks.length-1]; // before today's Fajr, we're still in last night's Isha period
+  for(let i=0;i<marks.length;i++){ if(nowMin >= marks[i].min) current = marks[i]; }
+  let next = marks.find(m=>m.min > nowMin);
+  let nextMin = next ? next.min : marks[0].min + 24*60;
+  if(!next) next = marks[0];
+  const remain = nextMin - nowMin;
+  const hh = Math.floor(remain/60), mm = remain%60;
+  const remainText = (hh>0 ? toBn(hh)+" ঘ. " : "") + toBn(mm)+" মি.";
+  return {current, next, remainText};
+}
+
+/* ===================== Daily hadith (rotates on every app open) =====================
+   Only muttafaqun 'alayh (agreed upon by Bukhari & Muslim) narrations are included,
+   so authenticity is not disputed among scholars. All relate to daily mu'amalat/mu'asharat. */
+const HADITH_LIST = [
+  {text:"যে ব্যক্তি আল্লাহ ও আখিরাতের প্রতি ঈমান রাখে, সে যেন ভালো কথা বলে অথবা চুপ থাকে।", source:"সহীহ বুখারী ও মুসলিম"},
+  {text:"তোমাদের কেউ ততক্ষণ পর্যন্ত পূর্ণ মুমিন হবে না, যতক্ষণ না সে নিজের জন্য যা পছন্দ করে, তার ভাইয়ের জন্যও তা পছন্দ করে।", source:"সহীহ বুখারী ও মুসলিম"},
+  {text:"প্রকৃত মুসলিম সেই ব্যক্তি, যার জিহ্বা ও হাত থেকে অন্য মুসলিমরা নিরাপদ থাকে।", source:"সহীহ বুখারী"},
+  {text:"যে ব্যক্তি আল্লাহ ও আখিরাতের প্রতি ঈমান রাখে, সে যেন তার মেহমানকে সম্মান করে।", source:"সহীহ বুখারী ও মুসলিম"},
+  {text:"যে ব্যক্তি আল্লাহ ও আখিরাতের প্রতি ঈমান রাখে, সে যেন তার প্রতিবেশীকে কষ্ট না দেয়।", source:"সহীহ বুখারী ও মুসলিম"},
+  {text:"তোমরা মানুষের জন্য সহজ করো, কঠিন করো না; সুসংবাদ দাও, বিমুখ করো না।", source:"সহীহ বুখারী ও মুসলিম"},
+  {text:"প্রকৃত শক্তিশালী সে নয় যে কুস্তিতে অন্যকে পরাজিত করে; বরং প্রকৃত শক্তিশালী সে, যে রাগের সময় নিজেকে নিয়ন্ত্রণ করে।", source:"সহীহ বুখারী ও মুসলিম"},
+  {text:"যে ব্যক্তি কোনো মুসলিমের দোষ-ত্রুটি গোপন রাখে, আল্লাহ দুনিয়া ও আখিরাতে তার দোষ-ত্রুটি গোপন রাখবেন।", source:"সহীহ মুসলিম"},
+  {text:"এক মুসলিম আরেক মুসলিমের ভাই; সে তার প্রতি জুলুম করে না এবং তাকে বিপদে ফেলে রাখে না।", source:"সহীহ বুখারী ও মুসলিম"},
+  {text:"যে ব্যক্তি আমাদের সাথে প্রতারণা করে, সে আমাদের অন্তর্ভুক্ত নয়।", source:"সহীহ মুসলিম"},
+  {text:"ক্রেতা-বিক্রেতা যতক্ষণ পৃথক না হয়, ততক্ষণ তাদের চুক্তি বাতিলের অধিকার থাকে। তারা সত্য কথা বলে ও বিষয়টি স্পষ্ট করলে তাদের লেনদেনে বরকত দেওয়া হয়; মিথ্যা বলে ও গোপন করলে বরকত মুছে ফেলা হয়।", source:"সহীহ বুখারী ও মুসলিম"},
+  {text:"তোমরা একে অপরকে হিংসা করো না, প্রতারণা করো না, একে অপরের প্রতি বিদ্বেষ পোষণ করো না, মুখ ফিরিয়ে নিয়ো না; বরং আল্লাহর বান্দা হিসেবে ভাই ভাই হয়ে যাও।", source:"সহীহ বুখারী ও মুসলিম"},
+  {text:"মিথ্যা থেকে বেঁচে থাকো, কেননা মিথ্যা মানুষকে পাপাচারের দিকে নিয়ে যায়, আর পাপাচার জাহান্নামের দিকে নিয়ে যায়।", source:"সহীহ বুখারী ও মুসলিম"},
+  {text:"তোমাদের মধ্যে সর্বোত্তম সে ব্যক্তি, যে ঋণ পরিশোধে সর্বোত্তম।", source:"সহীহ বুখারী"},
+  {text:"কেউ যেন তার ভাইয়ের চলমান বেচাকেনার ওপর দর কষাকষি করতে হস্তক্ষেপ না করে।", source:"সহীহ বুখারী ও মুসলিম"},
+  {text:"তোমাদের মধ্যে সর্বোত্তম সে, যার চরিত্র সর্বোত্তম।", source:"সহীহ বুখারী"},
+  {text:"আত্মীয়তার বন্ধন ছিন্নকারী জান্নাতে প্রবেশ করবে না।", source:"সহীহ বুখারী ও মুসলিম"},
+  {text:"তোমাদের কেউ যেন তার ভাইয়ের প্রতি যা তার নিজের জন্য অপছন্দনীয় তা না করে।", source:"সহীহ বুখারী ও মুসলিম"},
+  {text:"যে ব্যক্তি মানুষের প্রতি দয়া করে না, আল্লাহও তার প্রতি দয়া করেন না।", source:"সহীহ বুখারী ও মুসলিম"},
+  {text:"যুলুম কিয়ামতের দিন অন্ধকার হয়ে দেখা দেবে।", source:"সহীহ বুখারী ও মুসলিম"},
+];
+function useDailyHadith(){
+  const [hadith, setHadith] = useState(null);
+  useEffect(()=>{
+    let idx = 0;
+    try{
+      const prev = parseInt(localStorage.getItem("kherokhata_hadith_idx"), 10);
+      idx = isNaN(prev) ? 0 : (prev+1) % HADITH_LIST.length;
+      localStorage.setItem("kherokhata_hadith_idx", String(idx));
+    }catch(e){ idx = Math.floor(Math.random()*HADITH_LIST.length); }
+    setHadith(HADITH_LIST[idx]);
+  }, []);
+  return hadith;
 }
 
 /* ===================== Notifications ===================== */
@@ -427,7 +581,7 @@ const Ic = {
   home: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 11.5 12 4l8 7.5"/><path d="M6 10.5V20h12v-9.5"/></svg>,
   task: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 12l2.5 2.5L16 9"/></svg>,
   cal: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 9.5h16M8 3v3M16 3v3"/></svg>,
-  habit: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M6 6l2 2M16 16l2 2M18 6l-2 2M8 16l-2 2"/><circle cx="12" cy="12" r="3.2"/></svg>,
+  habit: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M6 4h11a2 2 0 012 2v13l-3-2-3 2-3-2-3 2V6a2 2 0 012-2z"/><path d="M9 8h6M9 11.5h6"/></svg>,
   goal: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1"/></svg>,
   note: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M6 3h9l5 5v13H6z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 16.5h6"/></svg>,
   exp: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/><circle cx="16.5" cy="14.5" r="1.2" fill="currentColor" stroke="none"/></svg>,
@@ -436,7 +590,7 @@ const MODULES = [
   {key:"dashboard", label:"আজ", icon:Ic.home, color:"var(--gold)"},
   {key:"tasks", label:"টাস্ক", icon:Ic.task, color:"var(--brick)"},
   {key:"calendar", label:"ক্যালেন্ডার", icon:Ic.cal, color:"var(--gold)"},
-  {key:"habits", label:"অভ্যাস", icon:Ic.habit, color:"var(--sage)"},
+  {key:"habits", label:"দিনলিপি", icon:Ic.habit, color:"var(--sage)"},
   {key:"goals", label:"গোল", icon:Ic.goal, color:"var(--plum)"},
   {key:"notes", label:"নোট", icon:Ic.note, color:"var(--slate)"},
   {key:"expenses", label:"হিসাব", icon:Ic.exp, color:"var(--ochre)"},
@@ -449,6 +603,7 @@ function App(){
   const [modal, setModal] = useState(null); // {type:"task"|"event"|"habit"|"goal"|"note"|"expense", data?}
   const [toast, setToast] = useState("");
   const [selectedDate, setSelectedDate] = useState(todayIso());
+  const prayer = usePrayerTimes();
 
   useEffect(()=>{ saveState(state); }, [state]);
   useEffect(()=>{
@@ -512,10 +667,10 @@ function App(){
     <React.Fragment>
       <Header state={state} />
       <div className="page" style={{paddingTop: tab==="dashboard" ? 0 : 4}}>
-        {tab==="dashboard" && <Dashboard state={state} updateItem={updateItem} toggleHabit={toggleHabit} setTab={setTab} openAdd={openAdd} showToast={showToast} />}
+        {tab==="dashboard" && <Dashboard state={state} updateItem={updateItem} toggleHabit={toggleHabit} setTab={setTab} openAdd={openAdd} showToast={showToast} prayer={prayer} />}
         {tab==="tasks" && <TasksView state={state} updateItem={updateItem} removeItem={removeItem} openAdd={openAdd} openEdit={openEdit} />}
         {tab==="calendar" && <CalendarView state={state} selectedDate={selectedDate} setSelectedDate={setSelectedDate} openAdd={openAdd} openEdit={openEdit} removeItem={removeItem} />}
-        {tab==="habits" && <HabitsView state={state} updateItem={updateItem} setState={setState} openAdd={openAdd} openEdit={openEdit} removeItem={removeItem} />}
+        {tab==="habits" && <DailyLogView state={state} updateItem={updateItem} setState={setState} openAdd={openAdd} openEdit={openEdit} removeItem={removeItem} prayer={prayer} />}
         {tab==="goals" && <GoalsView state={state} updateItem={updateItem} removeItem={removeItem} openAdd={openAdd} openEdit={openEdit} />}
         {tab==="notes" && <NotesView state={state} openAdd={openAdd} openEdit={openEdit} removeItem={removeItem} />}
         {tab==="expenses" && <MoneyView state={state} setState={setState} addItem={addItem} updateItem={updateItem} removeItem={removeItem} uid={uid} openAdd={openAdd} openEdit={openEdit} />}
@@ -560,7 +715,7 @@ function Header({state}){
 }
 
 /* ===================== Dashboard ===================== */
-function Dashboard({state, updateItem, toggleHabit, setTab, openAdd, showToast}){
+function Dashboard({state, updateItem, toggleHabit, setTab, openAdd, showToast, prayer}){
   const today = todayIso();
   const dueToday = state.tasks.filter(t=>t.dueDate===today);
   const doneToday = dueToday.filter(t=>t.done).length;
@@ -568,8 +723,32 @@ function Dashboard({state, updateItem, toggleHabit, setTab, openAdd, showToast})
   const habitsDoneToday = state.habits.filter(h=> (state.habitLogs[today]||{})[h.id]).length;
   const activeGoals = state.goals.filter(g=>!g.done);
 
+  const [tickCount, tick] = useState(0);
+  useEffect(()=>{ const iv = setInterval(()=>tick(t=>t+1), 60000); return ()=>clearInterval(iv); }, []);
+  const period = useMemo(()=>currentPeriod(prayer.times), [prayer.times, tickCount]);
+  const hadith = useDailyHadith();
+
   return (
     <React.Fragment>
+      {period && (
+        <div className="waqt-banner">
+          <div>
+            <div className="lbl">এখন চলছে</div>
+            <div className="now">{period.current.label} ওয়াক্ত</div>
+          </div>
+          <div className="next">পরবর্তী: {period.next.label}<br/>আর <b>{period.remainText}</b> বাকি</div>
+        </div>
+      )}
+
+      {hadith && (
+        <div className="hadith-card">
+          <span className="qmark">"</span>
+          <div className="kicker">আজকের হাদিস</div>
+          <div className="text">{hadith.text}</div>
+          <div className="src">— {hadith.source}</div>
+        </div>
+      )}
+
       <div className="hero-card">
         <div style={{fontSize:13, color:"var(--muted)"}}>আজকের অগ্রগতি</div>
         <div className="hero-row">
@@ -617,15 +796,19 @@ function Dashboard({state, updateItem, toggleHabit, setTab, openAdd, showToast})
         }
       </div>
 
-      <div className="section-title">আজকের অভ্যাস <span className="tag" onClick={()=>setTab("habits")}>সব দেখুন</span></div>
+      <div className="section-title">আজকের দিনলিপি <span className="tag" onClick={()=>setTab("habits")}>সব দেখুন</span></div>
       <div className="card tab-accent" style={{"--accent":"var(--sage)"}}>
-        {state.habits.length===0 ? <Empty glyph="◎" msg="এখনো কোনো অভ্যাস যোগ করা হয়নি" /> :
+        {state.habits.length===0 ? <Empty glyph="◎" msg="এখনো কোনো আইটেম যোগ করা হয়নি" /> :
           state.habits.map(h=>{
             const on = !!(state.habitLogs[today]||{})[h.id];
+            const time = h.kind==="prayer" && prayer.times ? prayer.times[h.prayerKey] : null;
             return (
               <div className="row" key={h.id}>
                 <Chk checked={on} onClick={()=>toggleHabit(h.id, today)} accent="var(--sage)" />
-                <div className={"row-title"+(on?" done":"")}>{h.title}</div>
+                <div className={"row-title"+(on?" done":"")} style={{flex:1}}>{h.title}</div>
+                {h.kind==="prayer" && (
+                  <span className="row-meta">{time || (prayer.status==="loading" ? "…" : "—")}</span>
+                )}
               </div>
             );
           })
@@ -763,9 +946,10 @@ function CalendarView({state, selectedDate, setSelectedDate, openAdd, openEdit, 
 }
 
 /* ===================== Habits ===================== */
-function HabitsView({state, setState, openAdd, openEdit, removeItem}){
+function DailyLogView({state, setState, openAdd, openEdit, removeItem, prayer}){
   const days = [];
   for(let i=6;i>=0;i--){ const d=new Date(); d.setDate(d.getDate()-i); days.push(isoDate(d)); }
+  const today = todayIso();
 
   const toggle = (habitId, iso)=>{
     setState(s=>{
@@ -777,11 +961,71 @@ function HabitsView({state, setState, openAdd, openEdit, removeItem}){
     });
   };
 
+  const prayers = state.habits.filter(h=>h.kind==="prayer");
+  const readings = state.habits.filter(h=>h.kind==="reading");
+  const custom = state.habits.filter(h=>h.kind==="custom");
+
   return (
     <React.Fragment>
-      {state.habits.length===0 ? (
-        <div className="card"><Empty glyph="◎" msg="কোনো অভ্যাস নেই — + দিয়ে নতুন অভ্যাস যোগ করো" /></div>
-      ) : state.habits.map(h=>{
+      <div className="section-title">
+        নামাজের সময়সূচি
+        <span className="row-meta">
+          {prayer.status==="loading" ? "লোড হচ্ছে…" : prayer.status==="error" ? "সময় পাওয়া যায়নি" : fmtDate(today)}
+        </span>
+      </div>
+      <div className="card tab-accent" style={{"--accent":"var(--sage)"}}>
+        {prayer.status==="error" && (
+          <div style={{fontSize:12, color:"var(--brick)", marginBottom:8}}>
+            ইন্টারনেট সংযোগ বা লোকেশন এক্সেস ছাড়া নামাজের সময় আনা যায়নি। ফোনে সরাসরি অ্যাপ খুললে এটা কাজ করবে।
+          </div>
+        )}
+        {prayers.map(h=>{
+          const on = !!(state.habitLogs[today]||{})[h.id];
+          const time = prayer.times ? prayer.times[h.prayerKey] : null;
+          return (
+            <div className="row" key={h.id}>
+              <Chk checked={on} onClick={()=>toggle(h.id, today)} accent="var(--sage)" />
+              <div className={"row-title"+(on?" done":"")} style={{flex:1}}>{h.title}</div>
+              <span className="row-meta">{time || (prayer.status==="loading" ? "…" : "—")}</span>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="section-title">তিলাওয়াত ও পাঠ</div>
+      {readings.map(h=>{
+        let streak = 0;
+        for(let i=days.length-1;i>=0;i--){
+          if((state.habitLogs[days[i]]||{})[h.id]) streak++; else break;
+        }
+        return (
+          <div className="card tab-accent" key={h.id} style={{"--accent":"var(--sage)"}}>
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+              <div style={{fontWeight:600}} onClick={()=>openEdit("habit", h)}>{h.title}</div>
+              <span className="pill" style={{background:"rgba(91,122,99,0.14)", color:"var(--sage)"}}>{toBn(streak)} দিন ধারা</span>
+            </div>
+            <div className="habit-week" style={{marginTop:10}}>
+              {days.map(iso=>{
+                const on = !!(state.habitLogs[iso]||{})[h.id];
+                const d = new Date(iso);
+                return (
+                  <div key={iso} className={"hcell"+(on?" on":"")} onClick={()=>toggle(h.id, iso)}>
+                    {BN_DAYS_SHORT[d.getDay()]}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+
+      <div className="section-title">
+        অন্যান্য দৈনন্দিন কাজ
+        <span className="tag" onClick={()=>openAdd("habit")}>+ নতুন যোগ করো</span>
+      </div>
+      {custom.length===0 ? (
+        <div className="card"><Empty glyph="✎" msg="ম্যানুয়ালি প্রতিদিনের কাজ যোগ করতে + এ ট্যাপ করো" /></div>
+      ) : custom.map(h=>{
         let streak = 0;
         for(let i=days.length-1;i>=0;i--){
           if((state.habitLogs[days[i]]||{})[h.id]) streak++; else break;
@@ -1101,15 +1345,15 @@ function HabitForm({data, addItem, updateItem, removeItem, uid, onClose, showToa
   const [title, setTitle] = useState(data?data.title:"");
   const save = ()=>{
     if(!title.trim()) return;
-    if(data){ updateItem("habits", data.id, {title}); showToast("অভ্যাস আপডেট হয়েছে"); }
-    else { addItem("habits", {id:uid(), title}); showToast("অভ্যাস যোগ হয়েছে"); }
+    if(data){ updateItem("habits", data.id, {title}); showToast("আপডেট হয়েছে"); }
+    else { addItem("habits", {id:uid(), title, kind:"custom"}); showToast("যোগ হয়েছে"); }
     onClose();
   };
   return (
-    <Sheet title={data?"অভ্যাস এডিট করো":"নতুন অভ্যাস"} onClose={onClose}>
-      <div className="field"><label>অভ্যাসের নাম</label><input autoFocus value={title} onChange={e=>setTitle(e.target.value)} placeholder="যেমন: ভোরে হাঁটা" /></div>
+    <Sheet title={data?"এডিট করো":"নতুন দৈনন্দিন কাজ"} onClose={onClose}>
+      <div className="field"><label>কাজের নাম</label><input autoFocus value={title} onChange={e=>setTitle(e.target.value)} placeholder="যেমন: ভোরে হাঁটা" /></div>
       <button className="btn btn-primary" onClick={save}>সংরক্ষণ করো</button>
-      {data && <button className="btn btn-danger" onClick={()=>{removeItem("habits", data.id); onClose();}}>অভ্যাস মুছে ফেলো</button>}
+      {data && <button className="btn btn-danger" onClick={()=>{removeItem("habits", data.id); onClose();}}>মুছে ফেলো</button>}
     </Sheet>
   );
 }
