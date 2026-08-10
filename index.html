@@ -259,6 +259,28 @@ button{font-family:inherit;}
 
 ::-webkit-scrollbar{ width:0; height:0; }
 
+.icon-btn{
+  width:28px; height:28px; flex-shrink:0; border:none; background:transparent; color:var(--muted);
+  display:flex; align-items:center; justify-content:center; border-radius:8px; cursor:pointer; padding:0;
+}
+.icon-btn svg{ width:15px; height:15px; }
+.icon-btn:hover, .icon-btn:active{ background:rgba(91,122,99,0.14); color:var(--sage); }
+.kind-label{
+  font-size:10.5px; color:var(--muted); font-weight:700; letter-spacing:0.3px; text-transform:uppercase;
+  margin:12px 0 4px 2px; opacity:0.75;
+}
+.kind-label:first-child{ margin-top:0; }
+.diary-progress-row{ display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+.diary-progress-row .progress-track{ flex:1; margin-top:0; }
+.diary-progress-row .count{ font-size:12.5px; font-weight:700; color:var(--sage); white-space:nowrap; }
+.circ-btn{
+  width:26px; height:26px; flex-shrink:0; border-radius:50%; border:1.5px solid var(--line); background:transparent;
+  color:var(--muted); display:inline-flex; align-items:center; justify-content:center; cursor:pointer; padding:0;
+}
+.circ-btn svg{ width:13px; height:13px; }
+.circ-btn.active{ background:var(--slate); border-color:var(--slate); color:#fff; }
+.agenda-legend{ font-size:11px; color:var(--muted); display:flex; align-items:center; margin-bottom:8px; }
+.agenda-legend .circ-btn{ pointer-events:none; }
 .linked-tag{
   font-size:11px; padding:2px 8px; border-radius:20px; background:rgba(107,74,110,0.12); color:var(--plum); font-weight:600;
 }
@@ -360,7 +382,7 @@ const DEFAULT_ACCOUNTS = [
 ];
 function freshState(){
   return { tasks:[], events:[], habits:[...DEFAULT_HABITS], habitLogs:{}, goals:[], notes:[],
-           accounts:[...DEFAULT_ACCOUNTS], transactions:[], budgets:{}, routines:[], meetingPoints:[] };
+           accounts:[...DEFAULT_ACCOUNTS], transactions:[], budgets:{}, routines:[], meetingPoints:[], debts:[] };
 }
 function migrateState(raw){
   const s = raw || {};
@@ -375,14 +397,18 @@ function migrateState(raw){
   if(!Array.isArray(s.notes)) s.notes = [];
   if(!Array.isArray(s.accounts) || s.accounts.length===0) s.accounts = [...DEFAULT_ACCOUNTS];
   if(!s.budgets || typeof s.budgets !== "object") s.budgets = {};
+  if(s.budgets.food !== undefined && s.budgets.grocery === undefined){ s.budgets.grocery = s.budgets.food; }
+  delete s.budgets.food;
   if(!Array.isArray(s.routines)) s.routines = [];
   if(!Array.isArray(s.meetingPoints)) s.meetingPoints = [];
+  if(!Array.isArray(s.debts)) s.debts = [];
   if(!Array.isArray(s.transactions)){
     s.transactions = (Array.isArray(s.expenses) ? s.expenses : []).map(e=>({
       id:e.id, type:"expense", amount:Number(e.amount||0), category:e.category||"other",
       accountId: s.accounts[0].id, note:e.note||"", date:e.date
     }));
   }
+  s.transactions = s.transactions.map(t=> t.category==="food" ? {...t, category:"grocery"} : t);
   delete s.expenses;
   return s;
 }
@@ -659,6 +685,8 @@ const Ic = {
   goal: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1"/></svg>,
   note: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M6 3h9l5 5v13H6z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 16.5h6"/></svg>,
   exp: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/><circle cx="16.5" cy="14.5" r="1.2" fill="currentColor" stroke="none"/></svg>,
+  edit: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>,
+  repeat: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 12a8 8 0 10-2.6 5.9"/><path d="M20 7v5h-5"/></svg>,
 };
 const MODULES = [
   {key:"dashboard", label:"আজ", icon:Ic.home, color:"var(--gold)"},
@@ -741,13 +769,13 @@ function App(){
     <React.Fragment>
       <Header state={state} />
       <div className="page" style={{paddingTop: tab==="dashboard" ? 0 : 4}}>
-        {tab==="dashboard" && <Dashboard state={state} updateItem={updateItem} toggleHabit={toggleHabit} setTab={setTab} openAdd={openAdd} showToast={showToast} prayer={prayer} />}
+        {tab==="dashboard" && <Dashboard state={state} updateItem={updateItem} toggleHabit={toggleHabit} setTab={setTab} openAdd={openAdd} openEdit={openEdit} showToast={showToast} prayer={prayer} />}
         {tab==="tasks" && <TasksView state={state} updateItem={updateItem} removeItem={removeItem} openAdd={openAdd} openEdit={openEdit} />}
         {tab==="calendar" && <CalendarView state={state} selectedDate={selectedDate} setSelectedDate={setSelectedDate} openAdd={openAdd} openEdit={openEdit} removeItem={removeItem} />}
         {tab==="habits" && <DailyLogView state={state} updateItem={updateItem} setState={setState} addItem={addItem} uid={uid} openAdd={openAdd} openEdit={openEdit} removeItem={removeItem} prayer={prayer} />}
         {tab==="goals" && <GoalsView state={state} updateItem={updateItem} removeItem={removeItem} openAdd={openAdd} openEdit={openEdit} />}
         {tab==="notes" && <NotesView state={state} openAdd={openAdd} openEdit={openEdit} removeItem={removeItem} />}
-        {tab==="expenses" && <MoneyView state={state} setState={setState} addItem={addItem} updateItem={updateItem} removeItem={removeItem} uid={uid} openAdd={openAdd} openEdit={openEdit} />}
+        {tab==="expenses" && <MoneyView state={state} setState={setState} addItem={addItem} updateItem={updateItem} removeItem={removeItem} uid={uid} openAdd={openAdd} openEdit={openEdit} showToast={showToast} />}
       </div>
 
       <button className="fab" onClick={fabAction} aria-label="নতুন যোগ করুন">+</button>
@@ -789,7 +817,7 @@ function Header({state}){
 }
 
 /* ===================== Dashboard ===================== */
-function Dashboard({state, updateItem, toggleHabit, setTab, openAdd, showToast, prayer}){
+function Dashboard({state, updateItem, toggleHabit, setTab, openAdd, openEdit, showToast, prayer}){
   const today = todayIso();
   const dueToday = state.tasks.filter(t=>t.dueDate===today);
   const doneToday = dueToday.filter(t=>t.done).length;
@@ -882,19 +910,38 @@ function Dashboard({state, updateItem, toggleHabit, setTab, openAdd, showToast, 
       <div className="section-title">আজকের দিনলিপি <span className="tag" onClick={()=>setTab("habits")}>সব দেখুন</span></div>
       <div className="card tab-accent" style={{"--accent":"var(--sage)"}}>
         {state.habits.length===0 ? <Empty glyph="◎" msg="এখনো কোনো আইটেম যোগ করা হয়নি" /> :
-          state.habits.map(h=>{
-            const on = !!(state.habitLogs[today]||{})[h.id];
-            const time = h.kind==="prayer" && prayer.times ? prayer.times[h.prayerKey] : null;
-            return (
-              <div className="row" key={h.id}>
-                <Chk checked={on} onClick={()=>toggleHabit(h.id, today)} accent="var(--sage)" />
-                <div className={"row-title"+(on?" done":"")} style={{flex:1}}>{h.title}</div>
-                {h.kind==="prayer" && (
-                  <span className="row-meta">{time || (prayer.status==="loading" ? "…" : "—")}</span>
-                )}
-              </div>
-            );
-          })
+          <React.Fragment>
+            <div className="diary-progress-row">
+              <div className="progress-track"><div className="progress-fill" style={{width:(state.habits.length ? Math.round(habitsDoneToday/state.habits.length*100) : 0)+"%", background:"var(--sage)"}}></div></div>
+              <div className="count">{toBn(habitsDoneToday)}/{toBn(state.habits.length)}</div>
+            </div>
+            {["prayer","reading","custom"].map(kind=>{
+              const items = state.habits.filter(h=>h.kind===kind);
+              if(items.length===0) return null;
+              const kindLabel = kind==="prayer" ? "নামাজ" : kind==="reading" ? "তিলাওয়াত ও পাঠ" : "ম্যানুয়াল যোগ করা কাজ";
+              return (
+                <React.Fragment key={kind}>
+                  <div className="kind-label">{kindLabel}</div>
+                  {items.map(h=>{
+                    const on = !!(state.habitLogs[today]||{})[h.id];
+                    const time = h.kind==="prayer" && prayer.times ? prayer.times[h.prayerKey] : null;
+                    return (
+                      <div className="row" key={h.id}>
+                        <Chk checked={on} onClick={()=>toggleHabit(h.id, today)} accent="var(--sage)" />
+                        <div className={"row-title"+(on?" done":"")} style={{flex:1}}>{h.title}</div>
+                        {h.kind==="prayer" && (
+                          <span className="row-meta">{time || (prayer.status==="loading" ? "…" : "—")}</span>
+                        )}
+                        {h.kind==="custom" && (
+                          <button className="icon-btn" onClick={()=>openEdit("habit", h)} aria-label="এডিট বা ডিলিট করো">{Ic.edit}</button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </React.Fragment>
+              );
+            })}
+          </React.Fragment>
         }
       </div>
 
@@ -1036,12 +1083,13 @@ function DailyLogView({state, setState, updateItem, addItem, uid, openAdd, openE
   const [meetingText, setMeetingText] = useState("");
   const [showHistory, setShowHistory] = useState(false);
 
-  const addMeetingPoint = (carryForward)=>{
+  const addMeetingPoint = ()=>{
     if(!meetingText.trim()) return;
-    addItem("meetingPoints", {id:uid(), text:meetingText.trim(), date:today, carryForward, closed:false});
+    addItem("meetingPoints", {id:uid(), text:meetingText.trim(), date:today, carryForward:false, closed:false});
     setMeetingText("");
   };
   const closeMeetingPoint = (id)=> updateItem("meetingPoints", id, {closed:true});
+  const toggleCarryForward = (m)=> updateItem("meetingPoints", m.id, {carryForward: !m.carryForward});
   const todaysAgenda = state.meetingPoints.filter(m=>{
     if(m.closed) return false;
     if(m.carryForward) return true;
@@ -1129,9 +1177,10 @@ function DailyLogView({state, setState, updateItem, addItem, uid, openAdd, openE
         }
         return (
           <div className="card tab-accent" key={h.id} style={{"--accent":"var(--sage)"}}>
-            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
-              <div style={{fontWeight:600}} onClick={()=>openEdit("habit", h)}>{h.title}</div>
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center", gap:8}}>
+              <div style={{fontWeight:600, flex:1}}>{h.title}</div>
               <span className="pill" style={{background:"rgba(91,122,99,0.14)", color:"var(--sage)"}}>{toBn(streak)} দিন ধারা</span>
+              <button className="icon-btn" onClick={()=>openEdit("habit", h)} aria-label="এডিট বা ডিলিট করো">{Ic.edit}</button>
             </div>
             <div className="habit-week" style={{marginTop:10}}>
               {days.map(iso=>{
@@ -1177,19 +1226,22 @@ function DailyLogView({state, setState, updateItem, addItem, uid, openAdd, openE
         <div className="field" style={{marginBottom:10}}>
           <textarea value={meetingText} onChange={e=>setMeetingText(e.target.value)} placeholder="যে বিষয়ে কথা বলবে তা লেখো..." style={{minHeight:52}} />
         </div>
-        <div className="chip-row">
-          <button className="btn" style={{width:"auto", flex:1, background:"var(--stone)", color:"var(--ink)", fontSize:13, padding:"10px 8px"}} onClick={()=>addMeetingPoint(false)}>শেষ (ফিরবে না)</button>
-          <button className="btn" style={{width:"auto", flex:1, background:"var(--slate)", color:"#fff", fontSize:13, padding:"10px 8px"}} onClick={()=>addMeetingPoint(true)}>চলমান (পরদিন ফিরবে)</button>
-        </div>
+        <button className="btn" style={{background:"var(--slate)", color:"#fff", fontSize:13.5, padding:"10px 8px"}} onClick={addMeetingPoint}>+ এজেন্ডায় যোগ করো</button>
         <div className="stitch" />
+        {todaysAgenda.length>0 && (
+          <div className="agenda-legend">
+            <span><span className="circ-btn" style={{marginRight:5}}>{Ic.repeat}</span>আগামীকালও আলোচনা দরকার হলে এটায় ট্যাপ করো</span>
+          </div>
+        )}
         {todaysAgenda.length===0 ? <Empty glyph="✎" msg="আজকের আলোচ্য বিষয় এখনো যোগ করা হয়নি" /> :
           todaysAgenda.map(m=>(
             <div className="row" key={m.id}>
-              {m.carryForward ? <Chk checked={false} onClick={()=>closeMeetingPoint(m.id)} accent="var(--slate)" /> : <span style={{width:22}}></span>}
               <div style={{flex:1}}>
                 <div className="row-title">{m.text}</div>
-                <div className="row-meta">{fmtDate(m.date)}{m.carryForward ? " · চলমান" : ""}</div>
+                <div className="row-meta">{fmtDate(m.date)}{m.carryForward ? " · আগামীকালও থাকবে" : ""}</div>
               </div>
+              <Chk checked={false} onClick={()=>closeMeetingPoint(m.id)} accent="var(--sage)" />
+              <button className={"circ-btn"+(m.carryForward?" active":"")} onClick={()=>toggleCarryForward(m)} aria-label="আগামীকালও আলোচনা দরকার" title="আগামীকালও আলোচনা দরকার">{Ic.repeat}</button>
             </div>
           ))
         }
@@ -1284,7 +1336,9 @@ function NotesView({state, openAdd, openEdit, removeItem}){
 
 /* ===================== Money management ===================== */
 const EXP_CATS = [
-  {key:"food", label:"খাবার", color:"var(--ochre)"},
+  {key:"grocery", label:"মুদি", color:"var(--ochre)"},
+  {key:"fishmeat", label:"মাছ-মাংস", color:"var(--brick)"},
+  {key:"vegetable", label:"সবজি", color:"#4E7D4A"},
   {key:"travel", label:"যাতায়াত", color:"var(--slate)"},
   {key:"family", label:"পরিবার", color:"var(--plum)"},
   {key:"bills", label:"বিল", color:"var(--brick)"},
@@ -1315,9 +1369,25 @@ function accountBalance(state, accId){
   return opening + delta;
 }
 
-function MoneyView({state, setState, addItem, updateItem, removeItem, uid, openAdd, openEdit}){
+// category: "debtor" = যারা আমাকে টাকা দেবে (আমি ধার দিয়েছি), "creditor" = যাদের আমি টাকা দেব (আমি ধার নিয়েছি)
+function personDebtBalances(state, category){
+  const map = {};
+  (state.debts||[]).filter(d=>d.category===category).forEach(d=>{
+    const key = d.person;
+    if(!(key in map)) map[key] = 0;
+    map[key] += (d.type==="add" ? Number(d.amount||0) : -Number(d.amount||0));
+  });
+  return Object.entries(map)
+    .map(([person, balance])=>({person, balance}))
+    .filter(x=>Math.abs(x.balance) > 0.001)
+    .sort((a,b)=> b.balance - a.balance);
+}
+
+function MoneyView({state, setState, addItem, updateItem, removeItem, uid, openAdd, openEdit, showToast}){
   const [filter, setFilter] = useState("all");
   const [budgetCat, setBudgetCat] = useState(null);
+  const [debtSheet, setDebtSheet] = useState(null); // {person, category}
+  const [newPersonCat, setNewPersonCat] = useState(null); // "debtor" | "creditor"
   const ym = todayIso().slice(0,7);
   const monthTx = state.transactions.filter(t=>t.date.startsWith(ym));
   const monthIncome = monthTx.filter(t=>t.type==="income").reduce((s,t)=>s+Number(t.amount||0),0);
@@ -1326,6 +1396,11 @@ function MoneyView({state, setState, addItem, updateItem, removeItem, uid, openA
 
   const byExpCat = EXP_CATS.map(c=>({...c, sum: monthTx.filter(t=>t.type==="expense" && t.category===c.key).reduce((s,t)=>s+Number(t.amount||0),0)}))
     .filter(c=>c.sum>0 || state.budgets[c.key]);
+
+  const debtors = personDebtBalances(state, "debtor");
+  const creditors = personDebtBalances(state, "creditor");
+  const totalOwedToMe = debtors.reduce((s,d)=>s+Math.max(0,d.balance),0);
+  const totalIOwe = creditors.reduce((s,d)=>s+Math.max(0,d.balance),0);
 
   const list = state.transactions
     .filter(t => filter==="all" ? true : t.type===filter)
@@ -1364,6 +1439,42 @@ function MoneyView({state, setState, addItem, updateItem, removeItem, uid, openA
             <div style={{fontWeight:600, color: accountBalance(state,a.id)<0 ? "var(--brick)" : "var(--ink)"}}>{moneyFmt(accountBalance(state,a.id))}</div>
           </div>
         ))}
+      </div>
+
+      <div className="section-title">দেনাদার <span style={{fontWeight:400, color:"var(--muted)"}}>(যারা আমাকে দেবে)</span> <span className="tag" onClick={()=>setNewPersonCat("debtor")}>+ নতুন</span></div>
+      <div className="card tab-accent" style={{"--accent":"var(--sage)"}}>
+        {debtors.length===0 ? <Empty glyph="৳" msg="কোনো দেনাদার নেই" /> : (
+          <React.Fragment>
+            <div className="row" style={{fontWeight:600}}>
+              <div className="row-title">মোট পাব</div>
+              <div style={{color:"var(--sage)"}}>{moneyFmt(totalOwedToMe)}</div>
+            </div>
+            {debtors.map(d=>(
+              <div className="row" key={d.person} onClick={()=>setDebtSheet({person:d.person, category:"debtor"})}>
+                <div className="row-title">{d.person}</div>
+                <div style={{fontWeight:600, color:"var(--sage)"}}>{moneyFmt(d.balance)}</div>
+              </div>
+            ))}
+          </React.Fragment>
+        )}
+      </div>
+
+      <div className="section-title">পাওনাদার <span style={{fontWeight:400, color:"var(--muted)"}}>(যাদের আমি দেব)</span> <span className="tag" onClick={()=>setNewPersonCat("creditor")}>+ নতুন</span></div>
+      <div className="card tab-accent" style={{"--accent":"var(--brick)"}}>
+        {creditors.length===0 ? <Empty glyph="৳" msg="কোনো পাওনাদার নেই" /> : (
+          <React.Fragment>
+            <div className="row" style={{fontWeight:600}}>
+              <div className="row-title">মোট দিতে হবে</div>
+              <div style={{color:"var(--brick)"}}>{moneyFmt(totalIOwe)}</div>
+            </div>
+            {creditors.map(d=>(
+              <div className="row" key={d.person} onClick={()=>setDebtSheet({person:d.person, category:"creditor"})}>
+                <div className="row-title">{d.person}</div>
+                <div style={{fontWeight:600, color:"var(--brick)"}}>{moneyFmt(d.balance)}</div>
+              </div>
+            ))}
+          </React.Fragment>
+        )}
       </div>
 
       {byExpCat.length>0 && (
@@ -1425,6 +1536,18 @@ function MoneyView({state, setState, addItem, updateItem, removeItem, uid, openA
           onSave={(val)=>{ setBudget(budgetCat, val); setBudgetCat(null); }}
           onClose={()=>setBudgetCat(null)} />
       )}
+
+      {newPersonCat && (
+        <NewPersonForm category={newPersonCat}
+          onStart={(person)=>{ setDebtSheet({person, category:newPersonCat}); setNewPersonCat(null); }}
+          onClose={()=>setNewPersonCat(null)} />
+      )}
+
+      {debtSheet && (
+        <PersonLedgerSheet state={state} person={debtSheet.person} category={debtSheet.category}
+          addItem={addItem} removeItem={removeItem} uid={uid}
+          onClose={()=>setDebtSheet(null)} showToast={showToast} />
+      )}
     </React.Fragment>
   );
 }
@@ -1437,6 +1560,88 @@ function BudgetForm({catKey, current, onSave, onClose}){
       <div className="field"><label>মাসিক সীমা (৳)</label><input autoFocus type="number" value={val} onChange={e=>setVal(e.target.value)} placeholder="০" /></div>
       <button className="btn btn-primary" onClick={()=>onSave(Number(val)||0)}>সংরক্ষণ করো</button>
       {current ? <button className="btn btn-danger" onClick={()=>onSave(0)}>বাজেট মুছে ফেলো</button> : null}
+    </Sheet>
+  );
+}
+
+function NewPersonForm({category, onStart, onClose}){
+  const [name, setName] = useState("");
+  const title = category==="debtor" ? "নতুন দেনাদার" : "নতুন পাওনাদার";
+  const start = ()=>{ if(!name.trim()) return; onStart(name.trim()); };
+  return (
+    <Sheet title={title} onClose={onClose}>
+      <div className="field">
+        <label>ব্যক্তির নাম</label>
+        <input autoFocus value={name} onChange={e=>setName(e.target.value)} placeholder="যেমন: রহিম ভাই"
+          onKeyDown={e=>{ if(e.key==="Enter") start(); }} />
+      </div>
+      <button className="btn btn-primary" onClick={start}>এগিয়ে যাও</button>
+    </Sheet>
+  );
+}
+
+function PersonLedgerSheet({state, person, category, addItem, removeItem, uid, onClose, showToast}){
+  const entries = (state.debts||[])
+    .filter(d=>d.category===category && d.person===person)
+    .sort((a,b)=> b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
+  const balance = entries.reduce((s,d)=> s + (d.type==="add" ? Number(d.amount||0) : -Number(d.amount||0)), 0);
+
+  const [entryType, setEntryType] = useState("add");
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
+  const [date, setDate] = useState(todayIso());
+
+  const addLabel = category==="debtor" ? "নতুন ধার দিলাম" : "নতুন ধার নিলাম";
+  const paymentLabel = category==="debtor" ? "টাকা ফেরত পেলাম" : "টাকা পরিশোধ করলাম";
+  const balanceLabel = category==="debtor" ? "বাকি পাব" : "বাকি দিতে হবে";
+
+  const save = ()=>{
+    if(!amount || Number(amount)<=0) return;
+    addItem("debts", {id:uid(), person, category, type:entryType, amount:Number(amount), note, date});
+    showToast("এন্ট্রি যোগ হয়েছে");
+    setAmount(""); setNote("");
+  };
+
+  return (
+    <Sheet title={person} onClose={onClose}>
+      <div className="card" style={{textAlign:"center", margin:"0 0 16px"}}>
+        <div style={{fontSize:12.5, color:"var(--muted)"}}>{balanceLabel}</div>
+        <div className="exp-total" style={{color: balance>0 ? (category==="debtor"?"var(--sage)":"var(--brick)") : "var(--muted)"}}>
+          {moneyFmt(Math.abs(balance))}
+        </div>
+      </div>
+
+      <div className="field">
+        <div className="chip-row">
+          <div className={"chip"+(entryType==="add"?" sel":"")} style={{"--accent":"var(--ochre)"}} onClick={()=>setEntryType("add")}>{addLabel}</div>
+          <div className={"chip"+(entryType==="payment"?" sel":"")} style={{"--accent":"var(--sage)"}} onClick={()=>setEntryType("payment")}>{paymentLabel}</div>
+        </div>
+      </div>
+      <div className="field"><label>পরিমাণ (৳)</label><input type="number" value={amount} onChange={e=>setAmount(e.target.value)} placeholder="০" /></div>
+      <div className="field"><label>নোট (ঐচ্ছিক)</label><input value={note} onChange={e=>setNote(e.target.value)} placeholder="যেমন: ঈদের আগে ধার" /></div>
+      <div className="field"><label>তারিখ</label><input type="date" value={date} onChange={e=>setDate(e.target.value)} /></div>
+      <button className="btn btn-primary" onClick={save}>যোগ করো</button>
+
+      <div className="section-title" style={{marginTop:18}}>ইতিহাস</div>
+      <div className="card tab-accent" style={{"--accent":"var(--ochre)"}}>
+        {entries.length===0 ? <Empty glyph="৳" msg="কোনো এন্ট্রি নেই" /> :
+          entries.map(d=>{
+            const isAdd = d.type==="add";
+            return (
+              <div className="row" key={d.id}>
+                <div style={{flex:1}}>
+                  <div className="row-title">{d.note || (isAdd ? addLabel : paymentLabel)}</div>
+                  <div className="row-meta">{fmtDate(d.date)}</div>
+                </div>
+                <div style={{fontWeight:600, color: isAdd ? "var(--ochre)" : "var(--sage)", marginRight:10}}>
+                  {isAdd?"+":"-"}{moneyFmt(d.amount)}
+                </div>
+                <span style={{color:"var(--brick)", fontSize:12.5, cursor:"pointer"}} onClick={()=>removeItem("debts", d.id)}>মুছো</span>
+              </div>
+            );
+          })
+        }
+      </div>
     </Sheet>
   );
 }
@@ -1527,10 +1732,10 @@ function HabitForm({data, addItem, updateItem, removeItem, uid, onClose, showToa
     onClose();
   };
   return (
-    <Sheet title={data?"এডিট করো":"নতুন দৈনন্দিন কাজ"} onClose={onClose}>
+    <Sheet title={data?"দৈনন্দিন কাজ এডিট করো":"নতুন দৈনন্দিন কাজ"} onClose={onClose}>
       <div className="field"><label>কাজের নাম</label><input autoFocus value={title} onChange={e=>setTitle(e.target.value)} placeholder="যেমন: ভোরে হাঁটা" /></div>
       <button className="btn btn-primary" onClick={save}>সংরক্ষণ করো</button>
-      {data && <button className="btn btn-danger" onClick={()=>{removeItem("habits", data.id); onClose();}}>মুছে ফেলো</button>}
+      {data && <button className="btn btn-danger" onClick={()=>{removeItem("habits", data.id); onClose();}}>এই কাজটি মুছে ফেলো</button>}
     </Sheet>
   );
 }
@@ -1611,7 +1816,7 @@ function NoteForm({state, data, addItem, updateItem, removeItem, uid, onClose, s
 function TransactionForm({state, data, addItem, updateItem, removeItem, uid, onClose, showToast}){
   const [type, setType] = useState(data?data.type:"expense");
   const [amount, setAmount] = useState(data?data.amount:"");
-  const [category, setCategory] = useState(data?data.category:"food");
+  const [category, setCategory] = useState(data?data.category:"grocery");
   const [accountId, setAccountId] = useState(data?data.accountId:(state.accounts[0]?state.accounts[0].id:""));
   const [note, setNote] = useState(data?(data.note||""):"");
   const [date, setDate] = useState(data?data.date:todayIso());
